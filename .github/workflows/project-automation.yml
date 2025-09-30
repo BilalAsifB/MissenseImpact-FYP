@@ -1,0 +1,43 @@
+name: Project Automation
+
+on:
+  issues:
+    types: [opened, closed]
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  project-automation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add new issues to Backlog
+        if: github.event_name == 'issues' && github.event.action == 'opened'
+        uses: actions/add-to-project@v0.5.0
+        with:
+          project-url: https://github.com/users/BilalAsifB/projects/1
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          status: "Backlog"
+
+      - name: Move closed issues to Done
+        if: github.event_name == 'issues' && github.event.action == 'closed'
+        uses: actions/add-to-project@v0.5.0
+        with:
+          project-url: https://github.com/users/YOUR-USERNAME/projects/NUMBER
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          status: "Done"
+
+      - name: Move opened PRs to In Review
+        if: github.event_name == 'pull_request' && github.event.action == 'opened'
+        uses: actions/add-to-project@v0.5.0
+        with:
+          project-url: https://github.com/users/YOUR-USERNAME/projects/NUMBER
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          status: "In Review"
+
+      - name: Move merged PRs to Done
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+        uses: actions/add-to-project@v0.5.0
+        with:
+          project-url: https://github.com/users/YOUR-USERNAME/projects/NUMBER
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          status: "Done"
