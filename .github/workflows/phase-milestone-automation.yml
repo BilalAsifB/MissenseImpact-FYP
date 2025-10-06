@@ -145,7 +145,7 @@ jobs:
                 } else {
                   // Find a matching status option (To Do, Not Started, or Backlog)
                   const toDoOption = statusField.options.find(
-                    o => ["to do", "not started", "backlog"].includes(o.name.toLowerCase())
+                    o => o.name.toLowerCase() === "to do"
                   );
 
                   if (!toDoOption) {
