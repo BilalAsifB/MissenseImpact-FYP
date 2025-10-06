@@ -7,7 +7,7 @@ on:
 
 permissions:
   issues: write
-  projects: write
+  contents: read
 
 jobs:
   check-phase1:
