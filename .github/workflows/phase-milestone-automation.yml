@@ -99,7 +99,7 @@ jobs:
                 console.log(`🆕 Created Phase ${nextPhaseNumber} issue: #${newIssue.data.number}`);
 
                 // --- PROJECT AUTOMATION START ---
-                const projectId = "PVT_REPLACE_WITH_YOURS"; // <-- Replace with your Project ID
+                const projectId = "PVT_kwHOBaaXmc4BEcDy";
 
                 // Add the issue to the Project
                 const addResponse = await github.graphql(`
