@@ -72,7 +72,7 @@ jobs:
                   }
                 }
               `, {
-                project: "PVT_kwDOAKEXx84AAAAAABlSVA", // Replace with your actual Project node ID
+                project: "PVT_kwHOBaaXmc4BEcDy", 
                 issue: newIssue.data.node_id
               });
 
