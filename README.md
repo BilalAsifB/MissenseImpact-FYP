@@ -36,6 +36,56 @@ Our project addresses this bias by adapting state-of-the-art **protein language 
 
 ---
 
+## Quick start
+
+```bash
+pip install -e .
+
+# 1. Build training data from annotated VCFs
+python scripts/build_training_data.py \
+    --gnomad_dir   /path/gnomad_pure_sas_annotated/ \
+    --sg10k_dir    /path/sg10k_annotated/ \
+    --indigen_dir  /path/indigen_annotated/ \
+    --thousandg_dir /path/1k_annotated/ \
+    --output_dir   data/processed/
+
+# 2. Train model 0 of 3
+python scripts/train.py \
+    --train_csv data/processed/train.csv \
+    --val_csv   data/processed/val.csv \
+    --model_id  0 \
+    --save_dir  checkpoints/
+
+# 3. Evaluate
+python scripts/evaluate.py \
+    --checkpoint checkpoints/model0_best.pt \
+    --benchmark_dir benchmarks/ \
+    --val_csv data/processed/val.csv
+```
+
+---
+
+## Repo layout
+
+| Path | Purpose |
+|---|---|
+| `data/pipeline.py` | `ProteinVariant` dataclass + ESM-1b tokenisation |
+| `data/dataset.py` | `SASVariantDataset` + `collate_variants` |
+| `data/post_vep.py` | VCF → training CSV (all 4 sources) |
+| `data/splits.py` | Position-aware train/val/test splitting |
+| `model/backbone.py` | ESM-1b wrapper with configurable freezing |
+| `model/fusion.py` | Ref/alt projection + difference |
+| `model/head.py` | Pathogenicity MLP |
+| `model/esm_missense.py` | Top-level model |
+| `training/loss.py` | AM clipped sigmoid cross-entropy |
+| `training/trainer.py` | EMA + training loop + checkpointing |
+| `evaluation/` | auROC, calibration, gene-bias, MAVE metrics |
+| `tuning/` | 3-phase Optuna hyperparameter search |
+| `scripts/` | Runnable entry points |
+| `configs/` | YAML hyperparameter configs |
+
+---
+
 ## 👨‍💻 Team
 
 * **Bilal Asif Burney (Lead)**
