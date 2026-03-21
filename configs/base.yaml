@@ -1,0 +1,37 @@
+# default hyperparameters
+
+model:
+  esm_model_name:   "facebook/esm1b_t33_650M_UR50S"
+  freeze_esm_layers: 30
+  esm_pooling:       "variant_pos"
+  proj_dim:          512
+  hidden_dim:        256
+  dropout:           0.1
+
+training:
+  max_steps:     350000
+  warmup_steps:  1000
+  batch_size:    16
+  esm_lr:        1.0e-5
+  head_lr:       1.0e-4
+  weight_decay:  0.01
+  grad_clip:     0.1
+  ema_decay:     0.999
+  eval_every:    500
+  patience:      15
+
+loss:
+  clip_neg:  0.0
+  clip_pos: -1.0
+
+data:
+  max_length: 1024
+  val_frac:   0.1
+  test_frac:  0.1
+  min_an:     100
+
+paths:
+  data_dir:    "data/processed"
+  cache_dir:   "data/cache"
+  checkpoint_dir: "checkpoints"
+  report_dir:     "reports"
