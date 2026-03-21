@@ -71,16 +71,21 @@ def test_weights_applied():
 
 def test_standard_bce_when_clipping_never_triggers():
     """
-    With clip thresholds set to extreme values so clipping never fires,
+    With clip thresholds pushed far negative so clipping never fires,
     loss must match standard BCE exactly.
+
+    The benign clip fires when logit < clip_neg.
+    The pathogenic clip fires when logit < clip_pos.
+    Setting both to -1e9 means a logit would have to be below -1e9
+    to trigger either clip — impossible for normally-distributed logits.
     """
     import torch.nn.functional as F
     torch.manual_seed(0)
     logits = torch.randn(50)
     labels = (torch.rand(50) > 0.5).float()
-    # clip_neg = +1e6: benign clip only triggers when logit < 1e6 — never for normal logits
-    # clip_pos = -1e6: path clip only triggers when logit < -1e6 — never for normal logits
-    loss_clip = clipped_sigmoid_xent(logits, labels, clip_neg=1e6, clip_pos=-1e6)
+    # clip_neg=-1e9: benign clip never triggers (no normal logit is below -1e9)
+    # clip_pos=-1e9: pathogenic clip never triggers for the same reason
+    loss_clip = clipped_sigmoid_xent(logits, labels, clip_neg=-1e9, clip_pos=-1e9)
     loss_bce  = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
     assert torch.allclose(loss_clip, loss_bce, atol=1e-5)
 
