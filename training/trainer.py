@@ -17,15 +17,21 @@ class EMAModel:
     """Exponential moving average of model weights (AM paper: decay=0.999)."""
 
     def __init__(self, model: nn.Module, decay: float = 0.999):
-        self.decay  = decay
-        self.shadow = {n: p.data.clone().float()
-                       for n, p in model.named_parameters() if p.requires_grad}
+        self.decay = decay
+        self.shadow = {
+            n: p.data.clone().float()
+            for n, p in model.named_parameters()
+            if p.requires_grad
+        }
+        self._backup = {}
 
     def update(self, model: nn.Module):
         for n, p in model.named_parameters():
             if p.requires_grad and n in self.shadow:
-                self.shadow[n] = (self.decay * self.shadow[n]
-                                  + (1 - self.decay) * p.data.float())
+                self.shadow[n] = (
+                    self.decay * self.shadow[n]
+                    + (1 - self.decay) * p.data.float()
+                )
 
     def apply_to(self, model: nn.Module):
         self._backup = {}
@@ -40,27 +46,34 @@ class EMAModel:
                 p.data.copy_(self._backup[n])
         self._backup = {}
 
-    def state_dict(self): return {"shadow": self.shadow, "decay": self.decay}
+    def state_dict(self):
+        return {"shadow": self.shadow, "decay": self.decay}
+
     def load_state_dict(self, d):
-        self.shadow = d["shadow"]; self.decay = d.get("decay", self.decay)
+        self.shadow = d["shadow"]
+        self.decay = d.get("decay", self.decay)
 
 
 class EarlyStopping:
     def __init__(self, patience: int = 15, min_delta: float = 1e-4):
-        self.patience  = patience
+        self.patience = patience
         self.min_delta = min_delta
-        self.best      = 0.0
-        self.wait      = 0
+        self.best = 0.0
+        self.wait = 0
         self.best_step = 0
 
     def step(self, metric: float, step: int) -> bool:
         if metric > self.best + self.min_delta:
-            self.best = metric; self.wait = 0; self.best_step = step
+            self.best = metric
+            self.wait = 0
+            self.best_step = step
         else:
             self.wait += 1
         if self.wait >= self.patience:
-            log.info("Early stop at step %d (best=%.4f at step %d)",
-                     step, self.best, self.best_step)
+            log.info(
+                "Early stop at step %d (best=%.4f at step %d)",
+                step, self.best, self.best_step,
+            )
             return True
         return False
 
@@ -68,37 +81,54 @@ class EarlyStopping:
 class Trainer:
     """Wraps training loop with EMA, early stopping, and checkpointing."""
 
-    def __init__(self, model, optimizer, loss_fn, device: str,
-                 save_dir: str, model_id: int = 0,
-                 ema_decay: float = 0.999,
-                 patience: int = 15,
-                 log_every: int = 100,
-                 eval_every: int = 500,
-                 scheduler=None):
-        self.model      = model
-        self.optimizer  = optimizer
-        self.loss_fn    = loss_fn
-        self.device     = device
-        self.save_dir   = Path(save_dir)
+    def __init__(
+        self,
+        model,
+        optimizer,
+        loss_fn,
+        device: str,
+        save_dir: str,
+        model_id: int = 0,
+        ema_decay: float = 0.999,
+        patience: int = 15,
+        log_every: int = 100,
+        eval_every: int = 500,
+        scheduler=None,
+    ):
+        self.model = model
+        self.optimizer = optimizer
+        self.loss_fn = loss_fn
+        self.device = device
+        self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.model_id   = model_id
-        self.ema        = EMAModel(model, ema_decay)
-        self.stopper    = EarlyStopping(patience)
-        self.log_every  = log_every
+        self.model_id = model_id
+        self.ema = EMAModel(model, ema_decay)
+        self.stopper = EarlyStopping(patience)
+        self.log_every = log_every
         self.eval_every = eval_every
-        self.scheduler  = scheduler
-        self.step       = 0
+        self.scheduler = scheduler
+        self.step = 0
+        # Store the configured freeze depth so we can re-apply it after warmup
+        self._freeze_layers = model.backbone.esm.config.num_hidden_layers
+        for i, layer in enumerate(model.backbone.esm.encoder.layer):
+            if not any(p.requires_grad for p in layer.parameters()):
+                self._freeze_layers = i + 1  # first frozen layer index + 1
+                break
 
     def _to(self, batch):
-        return {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()}
+        return {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
 
     def train_step(self, batch: dict) -> float:
         self.model.train()
         batch = self._to(batch)
-        out   = self.model(batch)
-        loss  = self.loss_fn(out["logit"], batch["labels"],
-                             weights=batch.get("weights")).mean()
+        out = self.model(batch)
+        loss = self.loss_fn(
+            out["logit"], batch["labels"],
+            weights=batch.get("weights"),
+        ).mean()
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
@@ -125,21 +155,34 @@ class Trainer:
 
     def save(self, auroc: float):
         path = self.save_dir / f"model{self.model_id}_step{self.step}.pt"
-        torch.save({
-            "model_state": self.model.state_dict(),
-            "ema_state":   self.ema.state_dict(),
-            "step":        self.step,
-            "val_auroc":   auroc,
-            "model_id":    self.model_id,
-        }, path)
+        torch.save(
+            {
+                "model_state": self.model.state_dict(),
+                "ema_state": self.ema.state_dict(),
+                "step": self.step,
+                "val_auroc": auroc,
+                "model_id": self.model_id,
+            },
+            path,
+        )
         log.info("Checkpoint: %s  auROC=%.4f", path.name, auroc)
         return path
 
-    def fit(self, train_loader, val_loader,
-            max_steps: int = 350_000, warmup_steps: int = 1000) -> float:
-        """Head warmup then full training, mirroring AM paper protocol."""
+    def fit(
+        self,
+        train_loader,
+        val_loader,
+        max_steps: int = 350_000,
+        warmup_steps: int = 1000,
+    ) -> float:
+        """
+        Head warmup then full training, mirroring AM paper protocol.
 
-        # Phase 1: freeze backbone, train head only for warmup_steps
+        Phase 1 (warmup_steps): backbone fully frozen, only head trains.
+        Phase 2 (remainder):    re-freeze bottom N layers per the original
+                                freeze_layers config, unfreeze top layers.
+        """
+        # Phase 1: freeze entire backbone
         for p in self.model.backbone.parameters():
             p.requires_grad = False
         log.info("Head warmup: %d steps", warmup_steps)
@@ -148,15 +191,16 @@ class Trainer:
                 break
             self.train_step(batch)
 
-        # Phase 2: unfreeze trainable backbone layers
+        # Phase 2: re-apply the original freeze depth.
+        # Re-enable all backbone params first, then freeze from the bottom.
         for p in self.model.backbone.parameters():
             p.requires_grad = True
-        # Re-freeze the bottom layers as configured
-        self.model.backbone._freeze(self.model.backbone.esm.config.num_hidden_layers
-                                    - sum(1 for l in self.model.backbone.esm.encoder.layer
-                                          if any(p.requires_grad for p in l.parameters())))
+        self.model.backbone._freeze(self._freeze_layers)
+        log.info(
+            "Full training: up to %d steps (bottom %d ESM layers frozen)",
+            max_steps, self._freeze_layers,
+        )
 
-        log.info("Full training: up to %d steps", max_steps)
         best_auroc = 0.0
         for batch in _inf(train_loader):
             if self.step >= max_steps:
