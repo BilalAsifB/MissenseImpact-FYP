@@ -1,117 +1,139 @@
-#!/usr/bin/env python3
 """
-Score new variants with a trained checkpoint.
-
-Input CSV must have: protein_id, sequence, position, reference_aa, alternate_aa
-Output CSV adds:     pathogenicity, logit, classification
+Unit tests for data/pipeline.py.
+Covers ProteinVariant validation, DataPipeline tokenisation,
+center-cropping for long sequences, and the alternate_sequence property.
 """
 
-import sys, argparse, logging
+import sys
+import pytest
 from pathlib import Path
-import numpy as np
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.dataset       import SASVariantDataset, collate_variants
-from model.esm_missense import ESMMissense
-from training.trainer   import EMAModel
-from evaluation.metrics import apply_calibration, fit_calibration
+from data.pipeline import ProteinVariant, DataPipeline
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s %(levelname)s  %(message)s")
+SEQ = "ACDEFGHIKLMNPQRSTVWY"   # 20 residues, one of each standard AA
 
 
-@torch.no_grad()
-def predict(model, csv_path, device, batch_size=32,
-            cal_c1=None, cal_c0=None):
-    """Returns DataFrame with pathogenicity scores added."""
-    # Add dummy label column if absent (needed by Dataset)
-    df = pd.read_csv(csv_path)
-    has_label = "label" in df.columns
-    if not has_label:
-        df["label"] = 0
-
-    tmp = "/tmp/_predict_input.csv"
-    df.to_csv(tmp, index=False)
-
-    ds = SASVariantDataset(tmp)
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=False,
-                    collate_fn=collate_variants, num_workers=2)
-
-    model.eval()
-    all_logits = []
-    for batch in dl:
-        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-                 for k, v in batch.items()}
-        all_logits.append(model(batch)["logit"].cpu().numpy())
-
-    logits = np.concatenate(all_logits)
-
-    if cal_c1 is not None:
-        probs = apply_calibration(logits, cal_c1, cal_c0)
-    else:
-        probs = 1 / (1 + np.exp(-logits))
-
-    if not has_label:
-        df = df.drop(columns="label")
-
-    df["logit"]          = logits
-    df["pathogenicity"]  = probs
-
-    # Apply AM-style classification thresholds
-    # Defaults from paper: likely_pathogenic >= 0.564, likely_benign <= 0.34
-    df["classification"] = "ambiguous"
-    df.loc[df["pathogenicity"] >= 0.564, "classification"] = "likely_pathogenic"
-    df.loc[df["pathogenicity"] <= 0.340, "classification"] = "likely_benign"
-
-    return df
+def test_variant_creates_correctly():
+    v = ProteinVariant("P001", SEQ, 1, "A", "C")
+    assert v.protein_id == "P001"
+    assert v.position == 1
+    assert v.reference_aa == "A"
+    assert v.alternate_aa == "C"
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint",  required=True)
-    p.add_argument("--input_csv",   required=True)
-    p.add_argument("--output_csv",  required=True)
-    p.add_argument("--val_csv",     default=None,
-                   help="If provided, fit calibration on this set first")
-    p.add_argument("--device",      default="cuda")
-    p.add_argument("--batch_size",  type=int, default=32)
-    args = p.parse_args()
+def test_alternate_sequence_single_change():
+    v = ProteinVariant("P001", SEQ, 1, "A", "G")
+    assert v.alternate_sequence[0] == "G"
+    assert v.alternate_sequence[1:] == SEQ[1:]
 
-    ckpt  = torch.load(args.checkpoint, map_location=args.device)
-    kw    = ckpt.get("model_kwargs", {})
-    model = ESMMissense(**kw).to(args.device)
-    if "ema_state" in ckpt:
-        ema = EMAModel(model)
-        ema.load_state_dict(ckpt["ema_state"])
-        ema.apply_to(model)
-    else:
-        model.load_state_dict(ckpt.get("model_state", ckpt))
 
-    cal_c1 = cal_c0 = None
-    if args.val_csv:
-        from data.pipeline      import DataPipeline
-        from evaluation.benchmark import run_inference
-        pipeline = DataPipeline()
-        val_df   = pd.read_csv(args.val_csv)
-        val_logits = run_inference(model, val_df, pipeline,
-                                   args.device, args.batch_size)
-        valid = ~np.isnan(val_logits)
-        cal_c1, cal_c0 = fit_calibration(val_logits[valid],
-                                          val_df["label"].values[valid])
-        logging.getLogger(__name__).info(
-            "Calibration: c1=%.4f  c0=%.4f", cal_c1, cal_c0)
+def test_alternate_sequence_middle():
+    v = ProteinVariant("P001", SEQ, 10, "K", "R")
+    assert v.alternate_sequence[9] == "R"
+    assert v.alternate_sequence[:9] == SEQ[:9]
+    assert v.alternate_sequence[10:] == SEQ[10:]
 
-    result = predict(model, args.input_csv, args.device,
-                     args.batch_size, cal_c1, cal_c0)
-    result.to_csv(args.output_csv, index=False)
 
-    counts = result["classification"].value_counts()
-    print(f"\nSaved {len(result):,} predictions → {args.output_csv}")
-    print(counts.to_string())
+def test_position_out_of_range_low():
+    with pytest.raises(ValueError, match="out of range"):
+        ProteinVariant("P001", SEQ, 0, "A", "C")
 
-if __name__ == "__main__":
-    main()
+
+def test_position_out_of_range_high():
+    with pytest.raises(ValueError, match="out of range"):
+        ProteinVariant("P001", SEQ, len(SEQ) + 1, "A", "C")
+
+
+def test_position_at_last_residue():
+    last = SEQ[-1]
+    v = ProteinVariant("P001", SEQ, len(SEQ), last, "A")
+    assert v.alternate_sequence[-1] == "A"
+
+
+def test_ref_aa_mismatch_raises():
+    with pytest.raises(ValueError):
+        ProteinVariant("P001", SEQ, 1, "G", "C")
+
+
+def test_synonymous_raises():
+    with pytest.raises(ValueError, match="synonymous"):
+        ProteinVariant("P001", SEQ, 1, "A", "A")
+
+
+def test_empty_sequence_raises():
+    with pytest.raises(ValueError, match="empty"):
+        ProteinVariant("P001", "", 1, "A", "C")
+
+
+def test_label_and_weight_defaults():
+    v = ProteinVariant("P001", SEQ, 1, "A", "C")
+    assert v.label is None
+    assert v.weight == 1.0
+    assert v.source == ""
+
+
+def test_pipeline_output_keys():
+    pipeline = DataPipeline()
+    v = ProteinVariant("P001", SEQ, 5, "G", "A", label=0)
+    sample = pipeline.process(v)
+    required = {
+        "ref_input_ids", "ref_attention_mask",
+        "alt_input_ids", "alt_attention_mask",
+        "variant_position", "protein_id", "label", "weight",
+    }
+    assert required.issubset(sample.keys())
+
+
+def test_pipeline_variant_position_shifted():
+    pipeline = DataPipeline()
+    v = ProteinVariant("P001", SEQ, 5, "G", "A", label=0)
+    sample = pipeline.process(v)
+    assert sample["variant_position"] == 5
+
+
+def test_pipeline_ref_alt_differ():
+    pipeline = DataPipeline()
+    v = ProteinVariant("P001", SEQ, 3, "D", "E", label=0)
+    sample = pipeline.process(v)
+    assert not (sample["ref_input_ids"] == sample["alt_input_ids"]).all()
+
+
+def test_pipeline_sequence_length_within_limit():
+    pipeline = DataPipeline(max_length=1024)
+    v = ProteinVariant("P001", SEQ, 1, "A", "C", label=1)
+    sample = pipeline.process(v)
+    assert sample["ref_input_ids"].size(1) <= 1024
+    assert sample["alt_input_ids"].size(1) <= 1024
+
+
+def test_pipeline_crops_long_sequence():
+    long_seq = "A" * 999 + "G" + "A" * 1000
+    pipeline = DataPipeline(max_length=128)
+    v = ProteinVariant("P001", long_seq, 1000, "G", "V", label=1)
+    sample = pipeline.process(v)
+    assert sample["ref_input_ids"].size(1) <= 128
+
+
+def test_pipeline_cropped_position_in_range():
+    long_seq = "A" * 999 + "G" + "A" * 1000
+    pipeline = DataPipeline(max_length=128)
+    v = ProteinVariant("P001", long_seq, 1000, "G", "V", label=1)
+    sample = pipeline.process(v)
+    seq_len = sample["ref_input_ids"].size(1)
+    assert 1 <= sample["variant_position"] < seq_len
+
+
+def test_pipeline_preserves_label():
+    pipeline = DataPipeline()
+    for label in [0, 1]:
+        v = ProteinVariant("P001", SEQ, 1, "A", "C", label=label)
+        assert pipeline.process(v)["label"] == label
+
+
+def test_pipeline_preserves_weight():
+    pipeline = DataPipeline()
+    v = ProteinVariant("P001", SEQ, 1, "A", "C", label=0, weight=0.4)
+    assert pipeline.process(v)["weight"] == 0.4
+    
