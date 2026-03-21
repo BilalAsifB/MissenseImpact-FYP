@@ -20,18 +20,12 @@ dependencies = [
     "biopython>=1.79",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "flake8>=6.0.0",
-]
-
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "flake8>=6.0.0",
 ]
@@ -40,3 +34,7 @@ dev-dependencies = [
 max-line-length = 120
 extend-ignore = ["E203", "W503", "E722"]
 exclude = ["src/", ".venv/", "build/"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data*", "model*", "training*", "evaluation*", "tuning*", "scripts*"]

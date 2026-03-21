@@ -23,15 +23,13 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: |
-          uv sync --all-extras --dev
+        run: uv sync --group dev
 
       - name: Run tests
-        run: |
-          uv run pytest tests/ -q --maxfail=5
+        run: uv run pytest tests/ -q --maxfail=5
 
       - name: Lint
         run: |
           uv run flake8 data/ model/ training/ evaluation/ tuning/ scripts/ \
             --max-line-length=120 \
-            --extend-ignore=E203,W503,E722 
+            --extend-ignore=E203,W503,E722
