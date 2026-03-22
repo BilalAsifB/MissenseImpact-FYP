@@ -4,12 +4,12 @@ Covers ProteinVariant validation, DataPipeline tokenisation,
 center-cropping for long sequences, and the alternate_sequence property.
 """
 
+from data.pipeline import ProteinVariant, DataPipeline
 import sys
 import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from data.pipeline import ProteinVariant, DataPipeline
 
 # 20-residue test sequence — one of each standard amino acid in alphabetical order
 # Actual character map (1-based):
@@ -35,7 +35,7 @@ def test_alternate_sequence_single_change():
 def test_alternate_sequence_middle():
     # pos 10 = 'L', pos 9 = 'K'
     v = ProteinVariant("P001", SEQ, 10, "L", "K")
-    assert v.alternate_sequence[9]  == "K"
+    assert v.alternate_sequence[9] == "K"
     assert v.alternate_sequence[:9] == SEQ[:9]
     assert v.alternate_sequence[10:] == SEQ[10:]
 

@@ -9,10 +9,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
 
-from data.pipeline      import DataPipeline, ProteinVariant
-from data.dataset       import collate_variants
+from data.pipeline import DataPipeline, ProteinVariant
+from data.dataset import collate_variants
 from evaluation.metrics import (
     VariantPredictions, EvalResult, evaluate,
     fit_calibration, apply_calibration,
@@ -27,7 +26,7 @@ def run_inference(model, df: pd.DataFrame, pipeline: DataPipeline,
     model.eval()
     logits = []
     for start in range(0, len(df), batch_size):
-        chunk = df.iloc[start:start+batch_size]
+        chunk = df.iloc[start:start + batch_size]
         samples = []
         for _, row in chunk.iterrows():
             try:
@@ -79,7 +78,7 @@ class BenchmarkSuite:
     """
 
     def __init__(self, data_dir: str, n_bootstrap: int = 999):
-        self.data_dir    = Path(data_dir)
+        self.data_dir = Path(data_dir)
         self.n_bootstrap = n_bootstrap
         self._cal_c1: Optional[float] = None
         self._cal_c0: Optional[float] = None
@@ -89,7 +88,7 @@ class BenchmarkSuite:
         """Fit AM's logistic calibration on the validation set."""
         val_df = pd.read_csv(val_csv)
         logits = run_inference(model, val_df, pipeline, device, batch_size)
-        valid  = ~np.isnan(logits)
+        valid = ~np.isnan(logits)
         self._cal_c1, self._cal_c0 = fit_calibration(
             logits[valid], val_df["label"].values[valid])
         log.info("Calibration: c1=%.4f  c0=%.4f", self._cal_c1, self._cal_c0)
@@ -103,8 +102,8 @@ class BenchmarkSuite:
 
         df = pd.read_csv(path)
         logits = run_inference(model, df, pipeline, device, batch_size)
-        valid  = ~np.isnan(logits)
-        df_v   = df[valid].reset_index(drop=True)
+        valid = ~np.isnan(logits)
+        df_v = df[valid].reset_index(drop=True)
         scores = logits[valid]
 
         if self._cal_c1 is not None:
@@ -127,20 +126,21 @@ class BenchmarkSuite:
         rows = []
         for name in benchmarks:
             res = self.run_one(model, pipeline, name, device, batch_size)
-            if res is None: continue
+            if res is None:
+                continue
             rows.append({
-                "benchmark":      name,
-                "auroc":          res.auroc,
-                "auroc_ci_lo":    res.auroc_ci[0],
-                "auroc_ci_hi":    res.auroc_ci[1],
-                "auprc":          res.auprc,
-                "gene_bias_auroc":res.gene_bias_auroc,
+                "benchmark": name,
+                "auroc": res.auroc,
+                "auroc_ci_lo": res.auroc_ci[0],
+                "auroc_ci_hi": res.auroc_ci[1],
+                "auprc": res.auprc,
+                "gene_bias_auroc": res.gene_bias_auroc,
                 "debiased_auroc": res.debiased_auroc,
-                "gene_auroc_mean":res.gene_auroc_mean,
-                "brier":          res.brier,
-                "ece":            res.ece,
+                "gene_auroc_mean": res.gene_auroc_mean,
+                "brier": res.brier,
+                "ece": res.ece,
                 "frac_ambiguous": res.frac_ambiguous,
-                "n_variants":     res.n_variants,
-                "n_genes":        res.n_genes,
+                "n_variants": res.n_variants,
+                "n_genes": res.n_genes,
             })
         return pd.DataFrame(rows)

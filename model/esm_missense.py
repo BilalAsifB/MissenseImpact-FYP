@@ -6,9 +6,9 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from model.backbone import ESMBackbone, ESM_DIM
-from model.fusion   import VariantFusion
-from model.head     import PathogenicityHead
-from training.loss  import clipped_sigmoid_xent
+from model.fusion import VariantFusion
+from model.head import PathogenicityHead
+from training.loss import clipped_sigmoid_xent
 
 
 class ESMMissense(nn.Module):
@@ -27,16 +27,16 @@ class ESMMissense(nn.Module):
 
     def __init__(
         self,
-        esm_model_name: str   = "facebook/esm1b_t33_650M_UR50S",
+        esm_model_name: str = "facebook/esm1b_t33_650M_UR50S",
         freeze_esm_layers: int = 30,
-        esm_pooling:    str   = "variant_pos",
-        proj_dim:       int   = 512,
-        hidden_dim:     int   = 256,
-        dropout:        float = 0.1,
+        esm_pooling: str = "variant_pos",
+        proj_dim: int = 512,
+        hidden_dim: int = 256,
+        dropout: float = 0.1,
     ):
         super().__init__()
-        self.backbone   = ESMBackbone(esm_model_name, freeze_esm_layers, esm_pooling)
-        self.fusion     = VariantFusion(ESM_DIM, proj_dim, dropout)
+        self.backbone = ESMBackbone(esm_model_name, freeze_esm_layers, esm_pooling)
+        self.fusion = VariantFusion(ESM_DIM, proj_dim, dropout)
         self.classifier = PathogenicityHead(proj_dim, hidden_dim, dropout)
 
     def forward(self, batch: dict) -> dict:
@@ -48,19 +48,19 @@ class ESMMissense(nn.Module):
                                 batch["alt_attention_mask"], var_pos)
 
         diff_emb = self.fusion(ref_emb, alt_emb)
-        logit    = self.classifier(diff_emb)
+        logit = self.classifier(diff_emb)
 
         return {
-            "logit":         logit,
+            "logit": logit,
             "pathogenicity": torch.sigmoid(logit),
-            "ref_emb":       ref_emb,
-            "alt_emb":       alt_emb,
-            "diff_emb":      diff_emb,
+            "ref_emb": ref_emb,
+            "alt_emb": alt_emb,
+            "diff_emb": diff_emb,
         }
 
     def compute_loss(self, batch: dict) -> tuple[torch.Tensor, dict]:
-        out     = self.forward(batch)
-        loss    = clipped_sigmoid_xent(
+        out = self.forward(batch)
+        loss = clipped_sigmoid_xent(
             out["logit"], batch["labels"],
             weights=batch.get("weights"),
         ).mean()

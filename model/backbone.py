@@ -31,9 +31,9 @@ class ESMBackbone(nn.Module):
 
     def __init__(
         self,
-        model_name:    str   = "facebook/esm1b_t33_650M_UR50S",
-        freeze_layers: int   = 30,
-        pooling:       Literal["variant_pos", "mean", "cls"] = "variant_pos",
+        model_name: str = "facebook/esm1b_t33_650M_UR50S",
+        freeze_layers: int = 30,
+        pooling: Literal["variant_pos", "mean", "cls"] = "variant_pos",
     ):
         super().__init__()
         self.pooling = pooling
@@ -50,8 +50,8 @@ class ESMBackbone(nn.Module):
 
     def forward(
         self,
-        input_ids:        torch.Tensor,   # (B, L)
-        attention_mask:   torch.Tensor,   # (B, L)
+        input_ids: torch.Tensor,   # (B, L)
+        attention_mask: torch.Tensor,   # (B, L)
         variant_positions: Optional[torch.Tensor] = None,  # (B,)
     ) -> torch.Tensor:                    # (B, 1280)
         hidden = self.esm(
@@ -72,4 +72,3 @@ class ESMBackbone(nn.Module):
             return hidden[:, 0, :]
 
         raise ValueError(f"Unknown pooling: {self.pooling}")
-    

@@ -5,7 +5,13 @@ Score new variants with a trained checkpoint.
 Input CSV must have: protein_id, sequence, position, reference_aa, alternate_aa
 Output CSV adds:     pathogenicity, logit, classification
 """
-import sys, argparse, logging
+from evaluation.metrics import apply_calibration, fit_calibration
+from training.trainer import EMAModel
+from model.esm_missense import ESMMissense
+from data.dataset import SASVariantDataset, collate_variants
+import sys
+import argparse
+import logging
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -14,10 +20,6 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.dataset       import SASVariantDataset, collate_variants
-from model.esm_missense import ESMMissense
-from training.trainer   import EMAModel
-from evaluation.metrics import apply_calibration, fit_calibration
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s  %(message)s")
@@ -57,8 +59,8 @@ def predict(model, csv_path, device, batch_size=32,
     if not has_label:
         df = df.drop(columns="label")
 
-    df["logit"]          = logits
-    df["pathogenicity"]  = probs
+    df["logit"] = logits
+    df["pathogenicity"] = probs
 
     # Apply AM-style classification thresholds
     # Defaults from paper: likely_pathogenic >= 0.564, likely_benign <= 0.34
@@ -71,17 +73,17 @@ def predict(model, csv_path, device, batch_size=32,
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint",  required=True)
-    p.add_argument("--input_csv",   required=True)
-    p.add_argument("--output_csv",  required=True)
-    p.add_argument("--val_csv",     default=None,
+    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--input_csv", required=True)
+    p.add_argument("--output_csv", required=True)
+    p.add_argument("--val_csv", default=None,
                    help="If provided, fit calibration on this set first")
-    p.add_argument("--device",      default="cuda")
-    p.add_argument("--batch_size",  type=int, default=32)
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--batch_size", type=int, default=32)
     args = p.parse_args()
 
-    ckpt  = torch.load(args.checkpoint, map_location=args.device)
-    kw    = ckpt.get("model_kwargs", {})
+    ckpt = torch.load(args.checkpoint, map_location=args.device)
+    kw = ckpt.get("model_kwargs", {})
     model = ESMMissense(**kw).to(args.device)
     if "ema_state" in ckpt:
         ema = EMAModel(model)
@@ -92,15 +94,15 @@ def main():
 
     cal_c1 = cal_c0 = None
     if args.val_csv:
-        from data.pipeline      import DataPipeline
+        from data.pipeline import DataPipeline
         from evaluation.benchmark import run_inference
         pipeline = DataPipeline()
-        val_df   = pd.read_csv(args.val_csv)
+        val_df = pd.read_csv(args.val_csv)
         val_logits = run_inference(model, val_df, pipeline,
                                    args.device, args.batch_size)
         valid = ~np.isnan(val_logits)
         cal_c1, cal_c0 = fit_calibration(val_logits[valid],
-                                          val_df["label"].values[valid])
+                                         val_df["label"].values[valid])
         logging.getLogger(__name__).info(
             "Calibration: c1=%.4f  c0=%.4f", cal_c1, cal_c0)
 
@@ -111,6 +113,7 @@ def main():
     counts = result["classification"].value_counts()
     print(f"\nSaved {len(result):,} predictions → {args.output_csv}")
     print(counts.to_string())
+
 
 if __name__ == "__main__":
     main()

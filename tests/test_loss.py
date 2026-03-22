@@ -1,10 +1,11 @@
 """
 Unit tests for training/loss.py.
-Test the custom loss function used for training, which 
-is a modified binary cross-entropy with clipping to 
+Test the custom loss function used for training, which
+is a modified binary cross-entropy with clipping to
 prevent extreme penalties for very wrong predictions.
 """
 
+from training.loss import clipped_sigmoid_xent
 import sys
 import math
 from pathlib import Path
@@ -13,7 +14,6 @@ import torch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from training.loss import clipped_sigmoid_xent
 
 
 def test_benign_floor_clips_low_loss():
@@ -27,7 +27,7 @@ def test_benign_floor_clips_low_loss():
     With clipping:    loss = softplus(0) = log(2) ≈ 0.693 (floored).
     """
     logits = torch.tensor([-5.0, -5.0])
-    labels = torch.tensor([0.0,  0.0])
+    labels = torch.tensor([0.0, 0.0])
     loss = clipped_sigmoid_xent(logits, labels, clip_neg=0.0)
     expected = math.log(2.0)  # softplus(0) = log(1 + exp(0)) = log(2)
     assert torch.allclose(loss, torch.tensor([expected, expected]), atol=1e-4)
@@ -53,17 +53,17 @@ def test_pathogenic_clipping():
     to softplus(-clip_pos) = softplus(1) = log(1 + e) ≈ 1.313.
     """
     logits = torch.tensor([-5.0, -5.0])
-    labels = torch.tensor([1.0,  1.0])
+    labels = torch.tensor([1.0, 1.0])
     loss = clipped_sigmoid_xent(logits, labels, clip_pos=-1.0)
     expected = math.log(1 + math.exp(1.0))  # softplus(-clip_pos) = softplus(1)
     assert torch.allclose(loss, torch.tensor([expected, expected]), atol=1e-4)
 
 
 def test_weights_applied():
-    logits  = torch.tensor([0.0, 0.0])
-    labels  = torch.tensor([1.0, 1.0])
+    logits = torch.tensor([0.0, 0.0])
+    labels = torch.tensor([1.0, 1.0])
     weights = torch.tensor([1.0, 0.5])
-    loss_w  = clipped_sigmoid_xent(logits, labels, weights=weights)
+    loss_w = clipped_sigmoid_xent(logits, labels, weights=weights)
     loss_no = clipped_sigmoid_xent(logits, labels)
     assert loss_w[0] == loss_no[0]
     assert torch.isclose(loss_w[1], loss_no[1] * 0.5)
@@ -86,7 +86,7 @@ def test_standard_bce_when_clipping_never_triggers():
     # clip_neg=-1e9: benign clip never triggers (no normal logit is below -1e9)
     # clip_pos=-1e9: pathogenic clip never triggers for the same reason
     loss_clip = clipped_sigmoid_xent(logits, labels, clip_neg=-1e9, clip_pos=-1e9)
-    loss_bce  = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+    loss_bce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
     assert torch.allclose(loss_clip, loss_bce, atol=1e-5)
 
 

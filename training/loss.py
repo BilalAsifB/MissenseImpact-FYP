@@ -5,7 +5,6 @@ AlphaMissense clipped sigmoid cross-entropy.
 import math
 from typing import Optional
 import torch
-import torch.nn.functional as F
 
 
 def _softplus(x: float) -> float:
@@ -23,11 +22,11 @@ def _softplus(x: float) -> float:
 
 
 def clipped_sigmoid_xent(
-    logits:   torch.Tensor,
-    labels:   torch.Tensor,
+    logits: torch.Tensor,
+    labels: torch.Tensor,
     clip_neg: float = 0.0,
     clip_pos: float = -1.0,
-    weights:  Optional[torch.Tensor] = None,
+    weights: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     AlphaMissense clipped sigmoid cross-entropy (Methods, equation in paper).
