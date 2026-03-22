@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Get list of staged .py files
+STAGED_PY=$(git diff --name-only --cached | grep '\.py$')
+
+# If no Python files staged, nothing to do
+if [ -z "$STAGED_PY" ]; then
+  exit 0
+fi
+
+# Auto-fix style with autopep8
+echo "Running autopep8 on staged files..."
+autopep8 --in-place --aggressive --max-line-length 120 $STAGED_PY
+
+# Re-stage the files autopep8 just modified
+git add $STAGED_PY
+
+# Run flake8 to catch anything autopep8 couldn't fix (unused imports, etc.)
+echo "Running flake8..."
+flake8 $STAGED_PY --max-line-length=120 --extend-ignore=E203,W503,E722
+
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "flake8 found issues that need manual fixing. Commit blocked."
+  exit 1
+fi
+
+echo "All checks passed."
+exit 0
