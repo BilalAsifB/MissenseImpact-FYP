@@ -1,10 +1,13 @@
 """
+data/post_vep.py
+
 Converts SAS-filtered, VEP-annotated VCFs → training CSV.
 
-Confirmed VCF schemas (after SAS filter + VEP annotation with MANE Select):
+Confirmed VCF schemas (from check_columns notebooks):
 
   gnomAD   | 0 samples | 665 INFO fields | AC_joint_sas/AN_joint_sas/AF_joint_sas | 26 CSQ fields
-  SG10K    | 1125 samp | 7   INFO fields | AC/AN/AF + AR2/DR2/IMP imputation      | 27 CSQ fields (has CANONICAL at 23)
+  SG10K    | 1125 samp | 7   INFO fields | AC/AN/AF + AR2/DR2/IMP imputation
+             | 27 CSQ fields (has CANONICAL at [23])
   IndiGen  | 0 samples | 2   INFO fields | VRT + CSQ only — NO AF                 | 26 CSQ fields
   1000G    | 489 samp  | 13  INFO fields | AC/AN/AF/SAS_AF                        | 26 CSQ fields
 
@@ -14,7 +17,6 @@ File naming:
   IndiGen: indigen_annotated_mane.vcf.gz  (single genome-wide file)
   1000G:   1k_chr{N}_SAS_annotated_mane.vcf.gz
 """
-
 from __future__ import annotations
 import re
 import json
@@ -213,35 +215,85 @@ def deduplicate(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_gene_map(symbols: list[str], cache: str = "data/cache/gene_uniprot.json"):
+    """
+    Map HGNC gene symbols → UniProt canonical accessions via MyGene.info.
+
+    Fixes vs original:
+      - Correct endpoint: /v3/query  (not /v3/gene which is for Entrez IDs)
+      - Correct body:     JSON list  (not form-encoded comma string)
+      - Response shape:   {"hits": [...]}  (not bare list)
+      - Hard error log if zero genes resolved (surfaces API failures immediately)
+    """
     path = Path(cache)
     mapping = json.loads(path.read_text()) if path.exists() else {}
     todo = [g for g in symbols if g and g not in mapping]
-    if todo:
-        log.info("MyGene.info: querying %d genes", len(todo))
-        sess = requests.Session()
-        sess.headers["Content-Type"] = "application/x-www-form-urlencoded"
-        for i in range(0, len(todo), 1000):
-            chunk = todo[i:i + 1000]
-            try:
-                r = sess.post("https://mygene.info/v3/gene",
-                              data={"q": ",".join(chunk), "scopes": "symbol",
-                                    "fields": "uniprot", "species": "human"}, timeout=30)
-                if r.ok:
-                    for hit in r.json():
-                        sym = hit.get("query", "")
-                        up = hit.get("uniprot", {})
-                        sp = up.get("Swiss-Prot", "")
-                        if isinstance(sp, list):
-                            sp = sp[0]
-                        if not sp:
-                            tr = up.get("TrEMBL", "")
-                            sp = tr[0] if isinstance(tr, list) else tr
-                        mapping[sym] = sp or ""
-            except Exception as e:
-                log.warning("MyGene chunk failed: %s", e)
-            time.sleep(0.5)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(mapping, indent=2))
+
+    if not todo:
+        log.info("Gene map: all %d genes already cached", len(mapping))
+        return mapping
+
+    log.info("MyGene.info: querying %d genes", len(todo))
+    sess = requests.Session()
+    resolved = failed = 0
+
+    for start in range(0, len(todo), 1000):
+        chunk = todo[start:start + 1000]
+        try:
+            # POST to /v3/query with JSON body — correct API for bulk symbol lookup
+            r = sess.post(
+                "https://mygene.info/v3/query",
+                json={
+                    "q": chunk,
+                    "scopes": "symbol",
+                    "fields": "uniprot,symbol",
+                    "species": "human",
+                    "size": len(chunk),
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+
+            if not r.ok:
+                log.warning("MyGene HTTP %d for chunk %d-%d: %s",
+                            r.status_code, start, start + len(chunk), r.text[:200])
+                continue
+
+            data = r.json()
+            # /v3/query returns {"hits": [...], "total": N} — not a bare list
+            hits = data.get("hits", data) if isinstance(data, dict) else data
+
+            for hit in hits:
+                sym = hit.get("query", hit.get("symbol", ""))
+                if not sym:
+                    continue
+                up = hit.get("uniprot", {}) or {}
+                sp = up.get("Swiss-Prot", "")
+                if isinstance(sp, list):
+                    sp = sp[0] if sp else ""
+                if not sp:
+                    tr = up.get("TrEMBL", "")
+                    sp = (tr[0] if isinstance(tr, list) else tr) or ""
+                mapping[sym] = sp
+                if sp:
+                    resolved += 1
+                else:
+                    failed += 1
+
+        except Exception as e:
+            log.warning("MyGene chunk %d-%d failed: %s", start, start + len(chunk), e)
+        time.sleep(0.5)
+
+    log.info("Gene map: %d resolved, %d no UniProt ID", resolved, failed)
+
+    if resolved == 0 and len(todo) > 0:
+        log.error(
+            "ZERO genes resolved from MyGene.info — API may be unreachable "
+            "or response format changed. Sample genes: %s", todo[:5]
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mapping, indent=2))
+    log.info("Gene map saved: %s (%d entries)", cache, len(mapping))
     return mapping
 
 # ── UniProt sequences ──────────────────────────────────────────────────────
