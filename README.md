@@ -1,5 +1,7 @@
 # MissenseImpact: Population-Aware Genomic Models for Missense Variant Effect Prediction
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 ## 📌 Overview
 
 **MissenseImpact** is a Final Year Project (FYP) focused on developing **population-aware variant effect predictors (VEPs)** for genomic data, with special emphasis on **South Asian populations**.
@@ -91,6 +93,12 @@ python scripts/evaluate.py \
 * **Bilal Asif Burney (Lead)**
 * **Sami Ur Rehman**
 * **Mustafa Waqar**
+
+---
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](./LICENSE) file for more details.
 
 ---
 
