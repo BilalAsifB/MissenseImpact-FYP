@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """
+scripts/build_training_data.py
+
 Full pipeline: annotated VCFs → split training CSVs.
 
 Usage:
     python scripts/build_training_data.py \
-        --gnomad_dir  /path/annotated_data_mane/gnomad/gnomad_pure_sas_annotated/ \
-        --sg10k_dir   /path/annotated_data_mane/sg10k/sg10k_annotated/ \
-        --indigen_dir /path/annotated_data_mane/indigen/indigen_annotated/ \
-        --thousandg_dir /path/annotated_data_mane/1k/1k_annotated/ \
-        --output_dir  data/processed/ \
-        --seq_cache   data/cache/uniprot_seqs.json \
-        --gene_cache  data/cache/gene_uniprot.json
+        --gnomad_dir    /path/gnomad_pure_sas_annotated/ \
+        --sg10k_dir     /path/sg10k_annotated/ \
+        --indigen_dir   /path/indigen_annotated/ \
+        --thousandg_dir /path/1k_annotated/ \
+        --output_dir    data/processed/ \
+        --seq_cache     data/cache/uniprot_seqs.json \
+        --gene_cache    data/cache/gene_uniprot.json \
+        --checkpoint_dir data/cache/vcf_checkpoints
+
+Checkpointing:
+    Each (source, chromosome) pair is saved to a parquet file in
+    --checkpoint_dir immediately after parsing. If the run is interrupted,
+    re-running the script resumes from the last completed chromosome instead
+    of re-parsing from scratch. Delete --checkpoint_dir to force a full re-parse.
 """
 
 from data.splits import split_by_protein, save_splits
@@ -21,7 +30,6 @@ import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s  %(message)s")
@@ -36,6 +44,8 @@ def main():
     p.add_argument("--output_dir", default="data/processed")
     p.add_argument("--seq_cache", default="data/cache/uniprot_seqs.json")
     p.add_argument("--gene_cache", default="data/cache/gene_uniprot.json")
+    p.add_argument("--checkpoint_dir", default="data/cache/vcf_checkpoints",
+                   help="Directory for per-(source, chrom) parquet checkpoints")
     p.add_argument("--chromosomes", nargs="*", default=None)
     p.add_argument("--min_an", type=int, default=100)
     p.add_argument("--val_frac", type=float, default=0.1)
@@ -51,7 +61,7 @@ def main():
         "1000g": args.thousandg_dir,
     }
 
-    # Step 1: VCFs → single benign CSV
+    # Step 1: VCFs → single benign CSV (with per-chromosome checkpointing)
     raw_csv = str(Path(args.output_dir) / "benign_all.csv")
     df = build_training_csv(
         annotated_dirs=annotated_dirs,
@@ -60,6 +70,7 @@ def main():
         seq_cache_path=args.seq_cache,
         gene_map_cache=args.gene_cache,
         min_an=args.min_an,
+        checkpoint_dir=args.checkpoint_dir,
     )
 
     # Step 2: Position-aware splits

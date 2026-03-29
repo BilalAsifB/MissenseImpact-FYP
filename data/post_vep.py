@@ -17,6 +17,7 @@ File naming:
   IndiGen: indigen_annotated_mane.vcf.gz  (single genome-wide file)
   1000G:   1k_chr{N}_SAS_annotated_mane.vcf.gz
 """
+
 from __future__ import annotations
 import re
 import json
@@ -351,6 +352,35 @@ def validate(seq, pos, ref, alt) -> bool:
 # ── Main pipeline ──────────────────────────────────────────────────────────
 
 
+def _ckpt_path(checkpoint_dir: Path, source: str, chrom: str) -> Path:
+    """Parquet checkpoint path for one (source, chromosome) pair."""
+    return checkpoint_dir / f"{source}_{chrom}.parquet"
+
+
+def _load_or_parse(
+    vcf_path: str,
+    source: str,
+    chrom: str,
+    chromosomes: list,
+    checkpoint_dir: Path,
+) -> pd.DataFrame:
+    """
+    Return parsed DataFrame for (source, chrom).
+    Loads from parquet checkpoint if it exists, otherwise parses the VCF
+    and saves a checkpoint immediately so progress survives a crash.
+    """
+    ckpt = _ckpt_path(checkpoint_dir, source, chrom)
+    if ckpt.exists():
+        df = pd.read_parquet(ckpt)
+        log.info("[%-8s] %s — loaded from checkpoint (%d variants)", source, chrom, len(df))
+        return df
+
+    df = parse_vcf(vcf_path, source, chromosomes if chrom == "all" else [chrom])
+    df.to_parquet(ckpt, index=False)
+    log.info("[%-8s] %s — checkpoint saved (%d variants → %s)", source, chrom, len(df), ckpt.name)
+    return df
+
+
 def build_training_csv(
     annotated_dirs: dict[str, str],
     output_csv: str,
@@ -358,22 +388,41 @@ def build_training_csv(
     seq_cache_path: str = "data/cache/uniprot_seqs.json",
     gene_map_cache: str = "data/cache/gene_uniprot.json",
     min_an: int = 100,
+    checkpoint_dir: str = "data/cache/vcf_checkpoints",
 ) -> pd.DataFrame:
+    """
+    Full pipeline: annotated VCFs → training CSV.
 
+    checkpoint_dir: directory where per-(source, chromosome) parquet files
+    are saved immediately after each VCF is parsed. On resume after a crash,
+    already-parsed chromosomes are loaded from disk in seconds instead of
+    re-parsed from VCF. Delete this directory to force a full re-parse.
+    """
     if chromosomes is None:
         chromosomes = [f"chr{i}" for i in range(1, 23)]
 
-    # Parse all sources
+    ckpt_dir = Path(checkpoint_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log.info("VCF checkpoint directory: %s", ckpt_dir)
+
+    # Parse all sources — resume from checkpoint where available
     frames = []
     indigen_done = False
     for source, vcf_dir in annotated_dirs.items():
         vcf_dir = Path(vcf_dir)
         src_frames = []
+
         if source == "indigen" and not indigen_done:
+            # IndiGen is one genome-wide file — checkpoint as a single unit
             p = find_vcf(vcf_dir, "indigen", "chr1")
             if p:
-                src_frames.append(parse_vcf(p, "indigen", chromosomes))
+                src_frames.append(
+                    _load_or_parse(p, "indigen", "all", chromosomes, ckpt_dir)
+                )
                 indigen_done = True
+            else:
+                log.warning("IndiGen VCF not found in %s", vcf_dir)
+
         else:
             for chrom in chromosomes:
                 p = find_vcf(vcf_dir, source, chrom)
@@ -381,12 +430,15 @@ def build_training_csv(
                     log.warning("Not found: %s %s in %s", source, chrom, vcf_dir)
                     continue
                 try:
-                    src_frames.append(parse_vcf(p, source, [chrom]))
+                    src_frames.append(
+                        _load_or_parse(p, source, chrom, chromosomes, ckpt_dir)
+                    )
                 except Exception as e:
                     log.error("%s %s: %s", source, chrom, e)
+
         if src_frames:
             df_src = pd.concat(src_frames, ignore_index=True)
-            log.info("%-8s: %d variants", source, len(df_src))
+            log.info("%-8s: %d variants total", source, len(df_src))
             frames.append(df_src)
 
     df = pd.concat(frames, ignore_index=True)
