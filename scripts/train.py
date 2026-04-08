@@ -36,8 +36,13 @@ def main():
     p.add_argument("--weight_decay", type=float, default=0.01)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_steps", type=int, default=350_000)
+    p.add_argument("--max_epochs", type=int, default=None)
     p.add_argument("--warmup_steps", type=int, default=1000)
     p.add_argument("--eval_every", type=int, default=500)
+    p.add_argument("--resume", default=None,
+                   help="Checkpoint path to resume from, or 'latest'")
+    p.add_argument("--resume_latest", action="store_true",
+                   help="Resume from latest checkpoint in --save_dir")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
@@ -76,9 +81,23 @@ def main():
         device=device, save_dir=args.save_dir,
         model_id=args.model_id, eval_every=args.eval_every,
     )
+
+    start_epoch = 1
+    if args.resume_latest or args.resume:
+        resume_target = "latest" if args.resume_latest else args.resume
+        resumed_epoch, resumed_path = trainer.load_checkpoint(
+            checkpoint_path=resume_target,
+            map_location=device,
+        )
+        start_epoch = resumed_epoch + 1
+        logging.info("Resuming training from %s at epoch %d",
+                     resumed_path, start_epoch)
+
     best = trainer.fit(train_loader, val_loader,
                        max_steps=args.max_steps,
-                       warmup_steps=args.warmup_steps)
+                       warmup_steps=args.warmup_steps,
+                       start_epoch=start_epoch,
+                       max_epochs=args.max_epochs)
     print(f"Best val auROC: {best:.4f}")
 
 

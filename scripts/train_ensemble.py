@@ -22,7 +22,8 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s  %(message)s")
 
 
-def train_one(model_id, cfg, train_csv, val_csv, save_dir, device):
+def train_one(model_id, cfg, train_csv, val_csv, save_dir, device,
+              resume_latest=False):
     torch.manual_seed(cfg.get("seed", 42) + model_id)
 
     train_dl = DataLoader(
@@ -56,9 +57,25 @@ def train_one(model_id, cfg, train_csv, val_csv, save_dir, device):
                       device=device, save_dir=save_dir, model_id=model_id,
                       eval_every=cfg.get("eval_every", 500),
                       patience=cfg.get("patience", 15))
+
+    start_epoch = 1
+    if resume_latest:
+        try:
+            resumed_epoch, resumed_path = trainer.load_checkpoint(
+                checkpoint_path="latest",
+                map_location=device,
+            )
+            start_epoch = resumed_epoch + 1
+            logging.info("Model %d resumed from %s at epoch %d",
+                         model_id, resumed_path, start_epoch)
+        except FileNotFoundError:
+            logging.info("Model %d: no checkpoint found, starting fresh", model_id)
+
     best = trainer.fit(train_dl, val_dl,
                        max_steps=cfg.get("max_steps", 350_000),
-                       warmup_steps=cfg.get("warmup_steps", 1000))
+                       warmup_steps=cfg.get("warmup_steps", 1000),
+                       start_epoch=start_epoch,
+                       max_epochs=cfg.get("max_epochs"))
     print(f"Model {model_id} best auROC: {best:.4f}")
     return best
 
@@ -71,6 +88,8 @@ def main():
                    help="JSON config file (from tuning output)")
     p.add_argument("--save_dir", default="checkpoints/ensemble/")
     p.add_argument("--n_models", type=int, default=3)
+    p.add_argument("--resume_latest", action="store_true",
+                   help="Resume each model from its latest checkpoint")
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
 
@@ -84,7 +103,7 @@ def main():
         print(f"  Training model {i + 1} / {args.n_models}")
         print(f"{'=' * 50}")
         train_one(i, cfg, args.train_csv, args.val_csv,
-                  args.save_dir, args.device)
+                  args.save_dir, args.device, args.resume_latest)
 
 
 if __name__ == "__main__":
