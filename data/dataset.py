@@ -19,7 +19,7 @@ class SASVariantDataset(Dataset):
     """
 
     REQUIRED = {"protein_id", "sequence", "position",
-                "reference_aa", "alternate_aa", "label"}
+                "ref_aa", "alt_aa", "label"}
 
     def __init__(self, csv_path: str, max_length: int = 1024,
                  tokenizer_name: str = ESM_MODEL_NAME):
