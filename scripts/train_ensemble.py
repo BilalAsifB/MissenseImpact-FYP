@@ -7,6 +7,7 @@ from training.trainer import Trainer
 from training.loss import clipped_sigmoid_xent
 from model.esm_missense import ESMMissense
 from data.dataset import SASVariantDataset, collate_variants
+import os
 import sys
 import json
 import argparse
@@ -22,17 +23,18 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s  %(message)s")
 
 
-def train_one(model_id, cfg, train_csv, val_csv, save_dir, device,
-              resume_latest=False):
+def train_one(model_id, cfg, train_csv, val_csv, save_dir, device, num_workers, resume_latest=False):
     torch.manual_seed(cfg.get("seed", 42) + model_id)
 
+    train_df = SASVariantDataset(train_csv)
+    val_df = SASVariantDataset(val_csv)
     train_dl = DataLoader(
-        SASVariantDataset(train_csv), batch_size=cfg.get("batch_size", 16),
+        train_df, batch_size=cfg.get("batch_size", 16),
         shuffle=True, collate_fn=collate_variants,
-        num_workers=4, pin_memory=True, drop_last=True)
+        num_workers=num_workers, pin_memory=True, drop_last=True)
     val_dl = DataLoader(
-        SASVariantDataset(val_csv), batch_size=32,
-        shuffle=False, collate_fn=collate_variants, num_workers=2)
+        val_df, batch_size=32, shuffle=False, collate_fn=collate_variants, 
+        num_workers=num_workers)
 
     model = ESMMissense(
         freeze_esm_layers=cfg.get("freeze_esm_layers", 30),
@@ -92,6 +94,9 @@ def main():
                    help="Resume each model from its latest checkpoint")
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
+    
+    max_workers = os.cpu_count()
+    num_workers = max(1, max_workers // 2) if max_workers else 0
 
     cfg = {}
     if args.config:
@@ -103,7 +108,7 @@ def main():
         print(f"  Training model {i + 1} / {args.n_models}")
         print(f"{'=' * 50}")
         train_one(i, cfg, args.train_csv, args.val_csv,
-                  args.save_dir, args.device, args.resume_latest)
+                  args.save_dir, args.device, num_workers, args.resume_latest)
 
 
 if __name__ == "__main__":

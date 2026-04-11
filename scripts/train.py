@@ -7,6 +7,7 @@ from training.trainer import Trainer
 from training.loss import clipped_sigmoid_xent
 from model.esm_missense import ESMMissense
 from data.dataset import SASVariantDataset, collate_variants
+import os
 import sys
 import argparse
 import logging
@@ -49,15 +50,18 @@ def main():
 
     torch.manual_seed(args.seed + args.model_id)
     device = args.device
+    max_workers = os.cpu_count()
+    num_workers = max(1, max_workers // 2) if max_workers else 0
+
 
     train_ds = SASVariantDataset(args.train_csv)
     val_ds = SASVariantDataset(args.val_csv)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
                               shuffle=True, collate_fn=collate_variants,
-                              num_workers=4, pin_memory=True, drop_last=True)
+                              num_workers=num_workers, pin_memory=True, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=32,
                             shuffle=False, collate_fn=collate_variants,
-                            num_workers=2, pin_memory=True)
+                            num_workers=num_workers, pin_memory=True)
 
     model = ESMMissense(
         freeze_esm_layers=args.freeze_layers,
