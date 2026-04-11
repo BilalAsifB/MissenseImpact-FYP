@@ -3,6 +3,11 @@ name = "missenseimpact-fyp"
 version = "0.1.0"
 description = "Population-aware missense variant effect prediction for South Asian cohorts"
 readme = "README.md"
+authors = [
+    {name = "Bilal Asif Burney", email = "bilalburney14@gmail.com"},
+    {name = "Mustafa Waqar", email = "mustafa.waqar02@gmail.com"},
+    {name = "Sami-Ur-Rehman", email = ""}
+]
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
@@ -18,6 +23,7 @@ dependencies = [
     "omegaconf>=2.3.0",
     "tqdm>=4.65.0",
     "biopython>=1.79",
+    "pytest>=9.0.3",
 ]
 
 [build-system]
