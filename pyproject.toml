@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     {name = "Bilal Asif Burney", email = "bilalburney14@gmail.com"},
     {name = "Mustafa Waqar", email = "mustafa.waqar02@gmail.com"},
-    {name = "Sami-Ur-Rehman", email = ""}
+    {name = "Sami-Ur-Rehman", email = "samiurrehman.190802@gmail.com"}
 ]
 requires-python = ">=3.10"
 dependencies = [
