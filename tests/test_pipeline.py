@@ -4,10 +4,13 @@ Covers ProteinVariant validation, DataPipeline tokenisation,
 center-cropping for long sequences, and the alternate_sequence property.
 """
 
-from data.pipeline import ProteinVariant, DataPipeline
 import sys
 import pytest
+import torch
 from pathlib import Path
+
+from data import pipeline as pipeline_mod
+from data.pipeline import ProteinVariant, DataPipeline
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -16,6 +19,30 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 #  1=A  2=C  3=D  4=E  5=F  6=G  7=H  8=I  9=K  10=L
 # 11=M 12=N 13=P 14=Q 15=R 16=S 17=T 18=V 19=W 20=Y
 SEQ = "ACDEFGHIKLMNPQRSTVWY"
+
+
+class _FakeTokenizer:
+    _aa_to_id = {aa: i + 3 for i, aa in enumerate("ACDEFGHIKLMNPQRSTVWY")}
+
+    def __call__(self, seq, return_tensors, padding, truncation, add_special_tokens):
+        assert return_tensors == "pt"
+        assert padding is False
+        assert truncation is False
+        assert add_special_tokens is True
+        ids = [0] + [self._aa_to_id.get(ch, 1) for ch in seq] + [2]
+        return {
+            "input_ids": torch.tensor([ids], dtype=torch.long),
+            "attention_mask": torch.ones((1, len(ids)), dtype=torch.long),
+        }
+
+
+@pytest.fixture(autouse=True)
+def _patch_tokenizer(monkeypatch):
+    monkeypatch.setattr(
+        pipeline_mod.EsmTokenizer,
+        "from_pretrained",
+        lambda _name: _FakeTokenizer(),
+    )
 
 
 def test_variant_creates_correctly():
