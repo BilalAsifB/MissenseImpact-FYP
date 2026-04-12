@@ -60,6 +60,17 @@ class TestDeriveThresholds:
         path_t, _, ben_t, _, _ = derive_thresholds(scores, labels)
         assert path_t > ben_t, "Pathogenic threshold must be higher than benign"
 
+    def test_overlap_case_is_repaired_to_strict_ordering(self):
+        # Construct a difficult distribution where naive first-hit selection from
+        # two PR curves can overlap or cross in threshold space.
+        scores = np.array(
+            [0.49, 0.50, 0.51, 0.52, 0.53, 0.54, 0.48, 0.47, 0.55, 0.56],
+            dtype=np.float32,
+        )
+        labels = np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int32)
+        path_t, _, ben_t, _, _ = derive_thresholds(scores, labels, target=0.60)
+        assert path_t > ben_t
+
     def test_frac_ambiguous_between_zero_and_one(self):
         scores, labels = _synthetic_scores()
         _, _, _, _, frac_amb = derive_thresholds(scores, labels)

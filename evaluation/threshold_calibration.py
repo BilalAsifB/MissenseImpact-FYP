@@ -159,18 +159,13 @@ def derive_thresholds(
     -------
     path_thresh, path_precision, benign_thresh, benign_precision, frac_ambiguous
     """
-    # --- Pathogenic threshold ---
-    # Walk the precision-recall curve: find the lowest threshold
-    # that still achieves >= target precision on the pathogenic class.
+    # --- Pathogenic threshold candidates ---
+    # Walk the precision-recall curve: collect thresholds with precision >= target
+    # for the pathogenic class.
     prec, _, thresh = precision_recall_curve(labels, scores)
-    # prec has one more element than thresh (the last point is always (1, 0))
-    # We want the first threshold where precision >= target
     path_idx = np.where(prec[:-1] >= target)[0]
-    if len(path_idx) > 0:
-        path_thresh = float(thresh[path_idx[0]])
-        path_precision = float(prec[path_idx[0]])
-    else:
-        # Target precision never reached — fall back to max score
+    path_candidates = [(float(thresh[i]), float(prec[i])) for i in path_idx]
+    if not path_candidates:
         path_thresh = float(scores.max())
         path_precision = float(prec[-2]) if len(prec) > 1 else 0.0
         log.warning(
@@ -179,17 +174,15 @@ def derive_thresholds(
             "Consider a lower target or more pathogenic training data.",
             target * 100, path_thresh, path_precision,
         )
+        path_candidates = [(path_thresh, path_precision)]
 
-    # --- Benign threshold ---
-    # Mirror: invert labels and negate scores so precision_recall_curve
-    # treats 'benign' as the positive class.
+    # --- Benign threshold candidates ---
+    # Mirror: invert labels and negate scores so precision_recall_curve treats
+    # 'benign' as the positive class.
     prec_b, _, thresh_b = precision_recall_curve(1 - labels, -scores)
     ben_idx = np.where(prec_b[:-1] >= target)[0]
-    if len(ben_idx) > 0:
-        # thresh_b is on the negated-score axis → un-negate
-        benign_thresh = float(-thresh_b[ben_idx[0]])
-        benign_precision = float(prec_b[ben_idx[0]])
-    else:
+    benign_candidates = [(float(-thresh_b[i]), float(prec_b[i])) for i in ben_idx]
+    if not benign_candidates:
         benign_thresh = float(scores.min())
         benign_precision = float(prec_b[-2]) if len(prec_b) > 1 else 0.0
         log.warning(
@@ -197,6 +190,36 @@ def derive_thresholds(
             "falling back to min score %.4f (precision=%.4f).",
             target * 100, benign_thresh, benign_precision,
         )
+        benign_candidates = [(benign_thresh, benign_precision)]
+
+    # Keep historical behaviour as first choice, then repair overlap if needed.
+    path_thresh, path_precision = path_candidates[0]
+    benign_thresh, benign_precision = benign_candidates[0]
+
+    if path_thresh <= benign_thresh:
+        feasible = [
+            (pt, pp, bt, bp)
+            for pt, pp in path_candidates
+            for bt, bp in benign_candidates
+            if pt > bt
+        ]
+        if feasible:
+            # Prefer the tightest non-overlapping pair to minimize ambiguous gap.
+            path_thresh, path_precision, benign_thresh, benign_precision = min(
+                feasible,
+                key=lambda t: (t[0] - t[2], -t[1], -t[3]),
+            )
+        else:
+            # As a last resort, enforce strict ordering numerically.
+            # This preserves the intended class regions even in degenerate PR cases.
+            if path_thresh == benign_thresh:
+                benign_thresh = float(np.nextafter(benign_thresh, -np.inf))
+            else:
+                # Keep highest-safe pathogenic and lowest-safe benign candidates.
+                path_thresh, path_precision = max(path_candidates, key=lambda t: t[0])
+                benign_thresh, benign_precision = min(benign_candidates, key=lambda t: t[0])
+                if path_thresh <= benign_thresh:
+                    benign_thresh = float(np.nextafter(path_thresh, -np.inf))
 
     # Fraction of variants that fall in the ambiguous gap
     frac_ambiguous = float(
