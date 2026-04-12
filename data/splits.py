@@ -25,7 +25,7 @@ def split_by_protein(
     Returns (train_df, val_df, test_df).
     """
     rng = np.random.default_rng(seed)
-    proteins = df["protein_id"].unique()
+    proteins = np.asarray(df["protein_id"].unique(), dtype=object)
     rng.shuffle(proteins)
 
     n_val = max(1, int(len(proteins) * val_frac))
