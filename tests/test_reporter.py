@@ -5,9 +5,13 @@ Unit tests for evaluation/reporter.py.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
 import pandas as pd
+
+# Prevent invalid inherited backend (e.g., matplotlib_inline) during test collection.
+os.environ["MPLBACKEND"] = "Agg"
 
 from evaluation import reporter as reporter_mod
 from evaluation.metrics import EvalResult, VariantPredictions
