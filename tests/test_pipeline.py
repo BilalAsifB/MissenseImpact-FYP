@@ -22,18 +22,22 @@ SEQ = "ACDEFGHIKLMNPQRSTVWY"
 
 
 class _FakeTokenizer:
-    _aa_to_id = {aa: i + 3 for i, aa in enumerate("ACDEFGHIKLMNPQRSTVWY")}
+    _aa_to_id = {aa: i + 4 for i, aa in enumerate("ACDEFGHIKLMNPQRSTVWY")}
+    unk_token_id = 3
 
     def __call__(self, seq, return_tensors, padding, truncation, add_special_tokens):
         assert return_tensors == "pt"
         assert padding is False
         assert truncation is False
         assert add_special_tokens is True
-        ids = [0] + [self._aa_to_id.get(ch, 1) for ch in seq] + [2]
+        ids = [0] + [self._aa_to_id.get(ch, self.unk_token_id) for ch in seq] + [2]
         return {
             "input_ids": torch.tensor([ids], dtype=torch.long),
             "attention_mask": torch.ones((1, len(ids)), dtype=torch.long),
         }
+
+    def convert_tokens_to_ids(self, token):
+        return self._aa_to_id.get(token, self.unk_token_id)
 
 
 @pytest.fixture(autouse=True)
