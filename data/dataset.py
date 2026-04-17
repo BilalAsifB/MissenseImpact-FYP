@@ -48,7 +48,12 @@ class SASVariantDataset(Dataset):
 
 
 def collate_variants(batch: list[dict]) -> dict:
-    """Pad variable-length sequences to longest in batch."""
+    """Pad variable-length sequences to longest in batch.
+
+    Preserves ``alt_input_ids``/``alt_attention_mask`` for backward
+    compatibility with legacy consumers and tests, but the model only
+    consumes ``ref_*`` tensors plus the per-variant token IDs.
+    """
     def pad(tensors: list) -> tuple[torch.Tensor, torch.Tensor]:
         seqs = [t.squeeze(0) for t in tensors]
         max_len = max(s.size(0) for s in seqs)
@@ -66,7 +71,7 @@ def collate_variants(batch: list[dict]) -> dict:
     weights = torch.tensor([b["weight"] for b in batch], dtype=torch.float32)
     var_pos = torch.tensor([b["variant_position"] for b in batch], dtype=torch.long)
 
-    return {
+    out = {
         "ref_input_ids": ref_ids,
         "ref_attention_mask": ref_mask,
         "alt_input_ids": alt_ids,
@@ -75,3 +80,16 @@ def collate_variants(batch: list[dict]) -> dict:
         "labels": labels,
         "weights": weights,
     }
+
+    # Optional fields used by the LM-head-scoring model. Kept optional so
+    # tests that build minimal fake batches continue to work.
+    if all("ref_token_id" in b for b in batch):
+        out["ref_token_id"] = torch.tensor(
+            [b["ref_token_id"] for b in batch], dtype=torch.long
+        )
+    if all("alt_token_id" in b for b in batch):
+        out["alt_token_id"] = torch.tensor(
+            [b["alt_token_id"] for b in batch], dtype=torch.long
+        )
+
+    return out

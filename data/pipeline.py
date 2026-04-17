@@ -1,5 +1,13 @@
 """
 ProteinVariant dataclass + ESM-1b tokenisation.
+
+Produces the tensors needed by the LM-head scoring head
+(model/esm_missense.py): a single reference-sequence tokenisation, the
+tokeniser IDs of the reference and alternate amino acids at the variant
+site, and the variant position inside the tokenised (cls-offset) sequence.
+
+The alternate-sequence tokens are still emitted so that legacy consumers
+and tests keep working, but the new model does not read them.
 """
 
 from __future__ import annotations
@@ -45,12 +53,30 @@ class ProteinVariant:
 
 
 class DataPipeline:
-    """Tokenises ref + alt sequences for ESM-1b input."""
+    """Tokenises ref + alt sequences for ESM-1b input.
+
+    The model only needs the reference-sequence tokenisation (it scores the
+    variant via the LM head at a masked variant position), but we still
+    emit the alternate tokens so legacy consumers and tests keep working.
+    """
 
     def __init__(self, tokenizer_name: str = ESM_MODEL_NAME,
                  max_length: int = ESM_MAX_TOKENS):
         self.tokenizer = EsmTokenizer.from_pretrained(tokenizer_name)
         self.max_length = max_length
+
+    def _token_id(self, aa: str) -> int:
+        """Resolve an amino-acid token to its tokenizer vocabulary ID.
+
+        ESM's tokenizer maps each single-letter AA to exactly one ID; we
+        look it up via convert_tokens_to_ids so the mapping stays
+        implementation-agnostic.
+        """
+        tid = self.tokenizer.convert_tokens_to_ids(aa)
+        unk_id = getattr(self.tokenizer, "unk_token_id", None)
+        if tid is None or (unk_id is not None and tid == unk_id):
+            raise ValueError(f"Tokenizer has no dedicated token for AA {aa!r}")
+        return int(tid)
 
     def process(self, variant: ProteinVariant) -> dict:
         ref_seq, alt_seq = variant.sequence, variant.alternate_sequence
@@ -78,6 +104,8 @@ class DataPipeline:
             "alt_input_ids": a["input_ids"],
             "alt_attention_mask": a["attention_mask"],
             "variant_position": pos_0 + 1,   # +1 for <cls> token
+            "ref_token_id": self._token_id(variant.reference_aa),
+            "alt_token_id": self._token_id(variant.alternate_aa),
             "protein_id": variant.protein_id,
             "label": variant.label,
             "weight": variant.weight,
