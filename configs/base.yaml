@@ -1,12 +1,15 @@
 # default hyperparameters
 
 model:
-  esm_model_name:   "facebook/esm1b_t33_650M_UR50S"
+  esm_model_name:    "facebook/esm1b_t33_650M_UR50S"
   freeze_esm_layers: 30
-  esm_pooling:       "variant_pos"
-  proj_dim:          512
-  hidden_dim:        256
-  dropout:           0.1
+  # Auxiliary masked-LM regularization during training. Mirrors the
+  # masked-MSA loss that AlphaMissense retains during fine-tuning: a
+  # fraction of non-variant residues is masked and the LM head is
+  # trained with standard cross-entropy on them. Set mlm_lambda=0 to
+  # disable (pure pathogenicity objective).
+  mlm_mask_prob:     0.15
+  mlm_max_masks:     80
 
 training:
   max_steps:     350000
@@ -21,8 +24,15 @@ training:
   patience:      15
 
 loss:
-  clip_neg:  0.0
-  clip_pos: -1.0
+  clip_neg:    0.0
+  clip_pos:   -1.0
+  mlm_lambda:  0.1
+
+proxy_sampling:
+  # "mutation_rate" matches the AlphaMissense trinucleotide-context
+  # resampling approximation (see data/mutation_rates.py); "uniform"
+  # is kept for ablation only.
+  mode: "mutation_rate"
 
 data:
   max_length: 1024
