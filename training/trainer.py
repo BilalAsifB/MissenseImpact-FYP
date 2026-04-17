@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.amp import GradScaler
+from torch.cuda.amp import autocast, GradScaler
 from sklearn.metrics import roc_auc_score
 
 log = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ class Trainer:
         log_every: int = 100,
         eval_every: int = 500,
         scheduler=None,
+        mlm_lambda: float = 0.0,
     ):
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -109,11 +110,13 @@ class Trainer:
         self.log_every = log_every
         self.eval_every = eval_every
         self.scheduler = scheduler
+        self.mlm_lambda = float(mlm_lambda)
         self.step = 0
         self.best_auroc = 0.0
         self.last_val_auroc = None
+        self.last_mlm_loss = None
         # AMP Scaler
-        self.scaler = GradScaler(self.device, enabled=True)
+        self.scaler = GradScaler()
         # TF32 boost
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -133,14 +136,21 @@ class Trainer:
     def train_step(self, batch: dict) -> float:
         self.model.train()
         batch = self._to(batch)
-        
-        with torch.autocast(device_type=self.device, dtype=torch.float16, enabled=True):
+
+        with autocast():
             out = self.model(batch)
-            loss = self.loss_fn(
+            variant_loss = self.loss_fn(
                 out["logit"], batch["labels"],
                 weights=batch.get("weights"),
             ).mean()
-        
+            if self.mlm_lambda > 0.0 and "mlm_loss" in out:
+                mlm_loss = out["mlm_loss"]
+                loss = variant_loss + self.mlm_lambda * mlm_loss
+                self.last_mlm_loss = float(mlm_loss.detach().cpu())
+            else:
+                loss = variant_loss
+                self.last_mlm_loss = None
+
         self.optimizer.zero_grad()
         # Scaled backward
         self.scaler.scale(loss).backward()
@@ -153,10 +163,10 @@ class Trainer:
 
         if self.scheduler:
             self.scheduler.step()
-        
+
         self.ema.update(self.model)
         self.step += 1
-        
+
         return loss.item()
 
     @torch.no_grad()
@@ -195,7 +205,6 @@ class Trainer:
         payload = {
             "model_state": self.model.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
-            "scaler_state": self.scaler.state_dict(),
             "ema_state": self.ema.state_dict(),
             "epoch": epoch,
             "step": self.step,
@@ -243,8 +252,6 @@ class Trainer:
 
         if "optimizer_state" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer_state"])
-        if "scaler_state" in ckpt:
-            self.scaler.load_state_dict(ckpt["scaler_state"])
         if "scheduler_state" in ckpt and self.scheduler is not None:
             self.scheduler.load_state_dict(ckpt["scheduler_state"])
         if "ema_state" in ckpt:
@@ -273,13 +280,6 @@ class Trainer:
         start_epoch: int = 1,
         max_epochs: int | None = None,
     ) -> float:
-        """
-        Head warmup then full training, mirroring AM paper protocol.
-
-        Phase 1 (warmup_steps): backbone fully frozen, only head trains.
-        Phase 2 (remainder):    re-freeze bottom N layers per the original
-                                freeze_layers config, unfreeze top layers.
-        """
         steps_per_epoch = len(train_loader)
         if max_epochs is None:
             max_epochs = max(1, int(math.ceil(max_steps / steps_per_epoch)))
@@ -306,7 +306,6 @@ class Trainer:
             epoch_losses = []
             for batch in train_loader:
                 if in_warmup and self.step >= warmup_steps:
-                    # Warmup boundary reached: switch to main training setup.
                     for p in self.model.backbone.parameters():
                         p.requires_grad = True
                     self.model.backbone._freeze(self._freeze_layers)
