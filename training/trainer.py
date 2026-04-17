@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from sklearn.metrics import roc_auc_score
 
 log = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ class Trainer:
         eval_every: int = 500,
         scheduler=None,
     ):
-        self.model = model
+        self.model = model.to(device)
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.device = device
@@ -111,6 +112,11 @@ class Trainer:
         self.step = 0
         self.best_auroc = 0.0
         self.last_val_auroc = None
+        # AMP Scaler
+        self.scaler = GradScaler()
+        # TF32 boost
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
         # Store the configured freeze depth so we can re-apply it after warmup
         self._freeze_layers = model.backbone.esm.config.num_hidden_layers
         for i, layer in enumerate(model.backbone.esm.encoder.layer):
@@ -127,19 +133,30 @@ class Trainer:
     def train_step(self, batch: dict) -> float:
         self.model.train()
         batch = self._to(batch)
-        out = self.model(batch)
-        loss = self.loss_fn(
-            out["logit"], batch["labels"],
-            weights=batch.get("weights"),
-        ).mean()
+        
+        with autocast():
+            out = self.model(batch)
+            loss = self.loss_fn(
+                out["logit"], batch["labels"],
+                weights=batch.get("weights"),
+            ).mean()
+        
         self.optimizer.zero_grad()
-        loss.backward()
+        # Scaled backward
+        self.scaler.scale(loss).backward()
+        # Unscale before clipping to avoid affecting the clipping threshold
+        self.scaler.unscale_(self.optimizer)
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
-        self.optimizer.step()
+        # Step with scaled gradients
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+
         if self.scheduler:
             self.scheduler.step()
+        
         self.ema.update(self.model)
         self.step += 1
+        
         return loss.item()
 
     @torch.no_grad()
