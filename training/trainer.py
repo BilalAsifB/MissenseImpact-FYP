@@ -195,6 +195,7 @@ class Trainer:
         payload = {
             "model_state": self.model.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
+            "scaler_state": self.scaler.state_dict(),
             "ema_state": self.ema.state_dict(),
             "epoch": epoch,
             "step": self.step,
@@ -242,6 +243,8 @@ class Trainer:
 
         if "optimizer_state" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer_state"])
+        if "scaler_state" in ckpt:
+            self.scaler.load_state_dict(ckpt["scaler_state"])
         if "scheduler_state" in ckpt and self.scheduler is not None:
             self.scheduler.load_state_dict(ckpt["scheduler_state"])
         if "ema_state" in ckpt:
