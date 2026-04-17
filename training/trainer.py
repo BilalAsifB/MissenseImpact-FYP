@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import GradScaler
 from sklearn.metrics import roc_auc_score
 
 log = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class Trainer:
         self.best_auroc = 0.0
         self.last_val_auroc = None
         # AMP Scaler
-        self.scaler = GradScaler()
+        self.scaler = GradScaler(self.device, enabled=True)
         # TF32 boost
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -134,7 +134,7 @@ class Trainer:
         self.model.train()
         batch = self._to(batch)
         
-        with autocast():
+        with torch.autocast(device_type=self.device, dtype=torch.float16, enabled=True):
             out = self.model(batch)
             loss = self.loss_fn(
                 out["logit"], batch["labels"],
