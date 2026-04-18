@@ -149,7 +149,7 @@ def _val_auroc(model, loader, device):
 
 def run_study(train_csv, val_csv, n_trials=50, phase=1,
               max_steps=2000, device="cuda", storage=None,
-              study_name=None, seed=42) -> optuna.Study:
+              study_name=None, seed=42, log_every=100) -> optuna.Study:
     study = optuna.create_study(
         study_name=study_name or f"esm_missense_p{phase}",
         direction="maximize",
@@ -159,7 +159,7 @@ def run_study(train_csv, val_csv, n_trials=50, phase=1,
         storage=storage, load_if_exists=True,
     )
     study.optimize(
-        make_objective(train_csv, val_csv, device, phase, max_steps, seed),
+        make_objective(train_csv, val_csv, device, phase, max_steps, seed, log_every),
         n_trials=n_trials, show_progress_bar=True,
         catch=(RuntimeError, torch.cuda.OutOfMemoryError),
     )
@@ -185,8 +185,8 @@ if __name__ == "__main__":
     p.add_argument("--log_every", type=int, default=100) 
     args = p.parse_args()
 
-    study = run_study(args.train_csv, args.val_csv, args.n_trials,
-                      args.phase, args.max_steps, args.device, args.storage)
+    study = run_study(args.train_csv, args.val_csv, args.n_trials, args.phase,
+                      args.max_steps, args.device, args.storage, args.log_every)
     with open(args.output_json, "w") as f:
         json.dump(dict(study.best_params), f, indent=2)
     print(f"\nSaved: {args.output_json}")
