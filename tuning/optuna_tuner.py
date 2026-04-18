@@ -3,6 +3,7 @@
 """
 
 from __future__ import annotations
+import os
 import json
 import logging
 import argparse
@@ -38,12 +39,16 @@ def sample(trial: optuna.Trial, phase: int) -> dict:
     return h
 
 
-def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
+def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42,
+                   log_every=100):  # ← new param
     def objective(trial):
         h = sample(trial, phase)
         from data.dataset import SASVariantDataset, collate_variants
         from model.esm_missense import ESMMissense
         from training.loss import clipped_sigmoid_xent
+
+        max_workers = os.cpu_count()
+        num_workers = max(1, max_workers // 2) if max_workers else 0
 
         torch.manual_seed(seed + trial.number)
         model = ESMMissense(
@@ -53,11 +58,11 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
 
         train_dl = DataLoader(
             SASVariantDataset(train_csv), batch_size=h["batch_size"],
-            shuffle=True, collate_fn=collate_variants, num_workers=2,
+            shuffle=True, collate_fn=collate_variants, num_workers=num_workers,
             pin_memory=True, drop_last=True)
         val_dl = DataLoader(
             SASVariantDataset(val_csv), batch_size=32, shuffle=False,
-            collate_fn=collate_variants, num_workers=2)
+            collate_fn=collate_variants, num_workers=num_workers)
 
         bb = [
             p for n, p in model.backbone.named_parameters()
@@ -74,6 +79,7 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
             groups, weight_decay=h["weight_decay"], eps=1e-5)
 
         step = 0
+        running_loss = 0.0          
         model.train()
         for epoch in range(100):
             for batch in train_dl:
@@ -96,7 +102,19 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), h["grad_clip"])
                 opt.step()
+
+                running_loss += loss.item()     # ← accumulate
                 step += 1
+
+                # ── Periodic step log ─────────────────────────────────────
+                if step % log_every == 0:
+                    avg_loss = running_loss / log_every
+                    running_loss = 0.0
+                    log.info(
+                        "trial=%d  phase=%d  step=%d/%d  avg_loss=%.4f",
+                        trial.number, phase, step, max_steps, avg_loss,
+                    )
+
             if step >= max_steps:
                 break
 
@@ -106,7 +124,12 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        return _val_auroc(model, val_dl, device)
+        final_auroc = _val_auroc(model, val_dl, device)
+        log.info(
+            "trial=%d  phase=%d  DONE  auroc=%.4f",
+            trial.number, phase, final_auroc,
+        )
+        return final_auroc
     return objective
 
 
@@ -159,6 +182,7 @@ if __name__ == "__main__":
     p.add_argument("--device", default="cuda")
     p.add_argument("--storage", default=None)
     p.add_argument("--output_json", default="best_hparams.json")
+    p.add_argument("--log_every", type=int, default=100) 
     args = p.parse_args()
 
     study = run_study(args.train_csv, args.val_csv, args.n_trials,
