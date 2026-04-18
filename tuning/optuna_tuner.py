@@ -22,9 +22,8 @@ def sample(trial: optuna.Trial, phase: int) -> dict:
     h = {
         "clip_neg": trial.suggest_float("clip_neg", -0.5, 1.0, step=0.25),
         "clip_pos": trial.suggest_float("clip_pos", -2.0, 0.0, step=0.25),
-        "proj_dim": trial.suggest_categorical("proj_dim", [256, 512, 768]),
-        "hidden_dim": trial.suggest_categorical("hidden_dim", [128, 256, 512]),
-        "dropout": trial.suggest_float("dropout", 0.05, 0.4),
+        "mlm_lambda": trial.suggest_float("mlm_lambda", 0.0, 0.5, step=0.05),
+        "mlm_mask_prob": trial.suggest_float("mlm_mask_prob", 0.0, 0.3, step=0.05),
         "head_lr": trial.suggest_float("head_lr", 1e-5, 5e-3, log=True),
         "weight_decay": trial.suggest_float("weight_decay", 1e-4, 1e-1, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [8, 16, 32]),
@@ -49,8 +48,7 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
         torch.manual_seed(seed + trial.number)
         model = ESMMissense(
             freeze_esm_layers=h["freeze_esm_layers"],
-            proj_dim=h["proj_dim"], hidden_dim=h["hidden_dim"],
-            dropout=h["dropout"],
+            mlm_mask_prob=h["mlm_mask_prob"],
         ).to(device)
 
         train_dl = DataLoader(
@@ -61,12 +59,19 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
             SASVariantDataset(val_csv), batch_size=32, shuffle=False,
             collate_fn=collate_variants, num_workers=2)
 
-        bb = [p for p in model.backbone.parameters() if p.requires_grad]
-        hd = list(model.fusion.parameters()) + list(model.classifier.parameters())
+        bb = [
+            p for n, p in model.backbone.named_parameters()
+            if p.requires_grad and not n.startswith("lm_head.")
+        ]
+        hd = [
+            p for n, p in model.backbone.named_parameters()
+            if p.requires_grad and n.startswith("lm_head.")
+        ]
+        groups = [{"params": bb, "lr": h["esm_lr"]}]
+        if hd:
+            groups.append({"params": hd, "lr": h["head_lr"]})
         opt = torch.optim.AdamW(
-            [{"params": bb, "lr": h["esm_lr"]},
-             {"params": hd, "lr": h["head_lr"]}],
-            weight_decay=h["weight_decay"], eps=1e-5)
+            groups, weight_decay=h["weight_decay"], eps=1e-5)
 
         step = 0
         model.train()
@@ -77,10 +82,14 @@ def make_objective(train_csv, val_csv, device, phase, max_steps=2000, seed=42):
                 batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v
                          for k, v in batch.items()}
                 out = model(batch)
-                loss = clipped_sigmoid_xent(
+                var_loss = clipped_sigmoid_xent(
                     out["logit"], batch["labels"],
                     clip_neg=h["clip_neg"], clip_pos=h["clip_pos"],
                     weights=batch.get("weights")).mean()
+                if h["mlm_lambda"] > 0.0 and "mlm_loss" in out:
+                    loss = var_loss + h["mlm_lambda"] * out["mlm_loss"]
+                else:
+                    loss = var_loss
                 if not torch.isfinite(loss):
                     raise optuna.TrialPruned()
                 opt.zero_grad()
